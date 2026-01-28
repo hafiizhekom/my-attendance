@@ -1,0 +1,116 @@
+name: Attendance Clock Out
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 13 * * 1-5' 
+
+jobs:
+  attendance:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Login & Clock Out
+        env:
+          BASE_URL: ${{ secrets.BASE_URL }}
+          ORIGIN: ${{ secrets.ORIGIN }}
+          EMAIL: ${{ secrets.EMAIL }}
+          PASSWORD: ${{ secrets.PASSWORD }}
+        run: |
+          set -e
+          BASE_URL="${BASE_URL%/}"
+
+          echo "== LOGIN =="
+          LOGIN_RESPONSE=$(curl -s --insecure \
+            "$BASE_URL/access_/login" \
+            -H "Accept: application/json" \
+            -H "Content-Type: application/json" \
+            -H "Origin: $ORIGIN" \
+            -H "Referer: $ORIGIN/" \
+            --data-raw "{
+              \"email\": \"$EMAIL\",
+              \"password\": \"$PASSWORD\"
+            }")
+
+          TOKEN=$(echo "$LOGIN_RESPONSE" | jq -r '.data.token')
+          if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
+            echo "❌ ERROR: token not found"
+            exit 1
+          fi
+
+          echo "✅ LOGIN OK"
+
+          # =====================
+          # RANDOM LOCATION
+          # =====================
+          LAT_MIN=-6.564531
+          LAT_MAX=-6.146903
+          LON_MIN=106.696123
+          LON_MAX=107.026218
+
+          SEED=$(date +%s)
+
+          LAT=$(awk -v min="$LAT_MIN" -v max="$LAT_MAX" -v s="$SEED" \
+            'BEGIN { srand(s); printf "%.8f", min + rand() * (max - min) }')
+
+          LON=$(awk -v min="$LON_MIN" -v max="$LON_MAX" -v s="$SEED" \
+            'BEGIN { srand(s+1); printf "%.8f", min + rand() * (max - min) }')
+
+          echo "📍 LAT=$LAT LON=$LON"
+          echo "LAT=$LAT LON=$LON" >> "$GITHUB_STEP_SUMMARY"
+
+          # =====================
+          # CLOCK OUT
+          # =====================
+          echo "== ⏰ CLOCK OUT =="
+
+          CLOCKOUT_RESPONSE=$(curl --insecure --silent --show-error \
+            --write-out "HTTP_STATUS:%{http_code}" \
+            "$BASE_URL/employee/attendances/live/mq/clock_out" \
+            -H "Accept: application/json" \
+            -H "Accept-Language: id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7" \
+            -H "Connection: keep-alive" \
+            -H "Origin: $ORIGIN" \
+            -H "Referer: $ORIGIN/" \
+            -H "Sec-Fetch-Dest: empty" \
+            -H "Sec-Fetch-Mode: cors" \
+            -H "Sec-Fetch-Site: same-site" \
+            -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36" \
+            -H "X-TOKEN: $TOKEN" \
+            -H 'sec-ch-ua: "Not(A:Brand";v="8", "Chromium";v="144", "Google Chrome";v="144"' \
+            -H "sec-ch-ua-mobile: ?0" \
+            -H 'sec-ch-ua-platform: "Windows"' \
+            -F "image_file=@Black-HR.jpg" \
+            -F "json_data={
+              \"longitude\":$LON,
+              \"latitude\":$LAT,
+              \"custom\":[[
+                {\"field_name\":\"1_issue_key\",\"value\":\"-No Key\"},
+                {\"field_name\":\"2_issue_summary\",\"value\":\"-No Summary\"},
+                {\"field_name\":\"3_work_description\",\"value\":\"Development\"},
+                {\"field_name\":\"4_hours\",\"value\":\"8\"},
+                {\"field_name\":\"5_username\",\"value\":\"sgthafii0249\"},
+                {\"field_name\":\"6_project_name\",\"value\":\"Moodle & ALE\"},
+                {\"field_name\":\"7_activity_type\",\"value\":\"Development\"}
+              ]]
+            }"
+          )
+
+          HTTP_STATUS=$(echo "$CLOCKOUT_RESPONSE" | sed -n 's/.*HTTP_STATUS://p')
+          BODY=$(echo "$CLOCKOUT_RESPONSE" | sed 's/HTTP_STATUS:.*//')
+
+          echo "📡 HTTP Status : $HTTP_STATUS"
+          echo "📦 Response   : $BODY"
+
+          if [ "$HTTP_STATUS" -eq 200 ]; then
+            echo "✅ Clock-out SUCCESS"
+            echo "✅ Clock-out SUCCESS (LAT=$LAT, LON=$LON)" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "❌ Clock-out FAILED (HTTP $HTTP_STATUS)"
+            echo "$BODY"
+            echo "❌ Clock-out FAILED (HTTP $HTTP_STATUS)" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
