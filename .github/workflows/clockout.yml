@@ -3,7 +3,7 @@ name: Attendance Clock Out
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 13 * * 1-5' 
+    - cron: '0 10 * * 1-5' 
 
 jobs:
   attendance:
